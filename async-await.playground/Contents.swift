@@ -77,5 +77,50 @@ func getAPRForUserIdsSerially() {
     }
 }
 
-getAPRForUserIdsSerially()
+// getAPRForUserIdsSerially()
 
+actor FailedUserIdsCollector {
+    private var failedIds: [Int] = []
+    
+    func addFailedId(_ id: Int) {
+        failedIds.append(id)
+    }
+    
+    func getFailedIds() -> [Int] {
+        failedIds
+    }
+}
+
+func getAPRForAllUsersConcurrently(ids: [Int]) async throws -> (aprDict: [Int: Double], failedUserIds: [Int]) {
+    var userAPR: [Int: Double] = [:]
+    let failedIdsCollector = FailedUserIdsCollector()
+    
+    try await withThrowingTaskGroup(of: (Int, Double)?.self) { group in
+        for id in ids {
+            group.addTask {
+                do {
+                    let apr = try await getAPR(userId: id)
+                    return (id, apr)
+                } catch {
+                    await failedIdsCollector.addFailedId(id)
+                    return nil
+                }
+            }
+        }
+        
+        for try await result in group {
+            if let (id, apr) = result {
+                userAPR[id] = apr
+            }
+        }
+    }
+    
+    let failedIds = await failedIdsCollector.getFailedIds()
+    return (userAPR, failedIds)
+}
+
+Task {
+    let result = try await getAPRForAllUsersConcurrently(ids: ids)
+    print("User APRs: \(result.aprDict)")
+    print("Failed user ids: \(result.failedUserIds)")
+}
